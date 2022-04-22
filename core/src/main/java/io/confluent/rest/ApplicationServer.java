@@ -16,6 +16,10 @@
 
 package io.confluent.rest;
 
+import java.io.IOException;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.metrics.Gauge;
 import org.apache.kafka.common.metrics.Metrics;
@@ -33,6 +37,7 @@ import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.NetworkTrafficServerConnector;
 import org.eclipse.jetty.server.ProxyConnectionFactory;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.SslConnectionFactory;
@@ -578,12 +583,90 @@ public final class ApplicationServer<T extends RestConfig> extends Server {
 
   static Handler wrapWithGzipHandler(RestConfig config, Handler handler) {
     if (config.getBoolean(RestConfig.ENABLE_GZIP_COMPRESSION_CONFIG)) {
-      GzipHandler gzip = new GzipHandler();
+      GzipHandler gzip = new MyGzipHandler();
       gzip.setIncludedMethods("GET", "POST");
+      //required to do inbound deflation.  Without this we only compress responses (if the client agrees)
+      gzip.setInflateBufferSize(9999999);
       gzip.setHandler(handler);
       return gzip;
     }
     return handler;
+  }
+  //to compress data we need to use the Content-Encoding header and set it to gzip
+  //Curl doesn't do the compression, the payload needs to be compressed to start with
+  // echo '{"value": {"type": "JSON", "data": "{\"Hello\":\"Kafka Summit\"}"}}\r\n' | gzip | curl -vvvvv --data-binary @- -H "Content-Encoding: gzip"  -H "Content-Type: application/json" -X POST http://localhost:8082/v3/clusters/nHQfD6V7Q_K29guDHiLdpw/topics/summit/records
+
+  //Output looks like
+  //[2022-04-19 23:39:50,033] INFO gzip request input stream102 (io.confluent.rest.ApplicationServer:607)
+  //[2022-04-19 23:39:50,033] INFO gzip base requestRequest(POST //localhost:8082/v3/clusters/nHQfD6V7Q_K29guDHiLdpw/topics/summit/records)@668a0a3e (io.confluent.rest.ApplicationServer:608)
+  //[2022-04-19 23:39:50,034] INFO ** Header: X-Content-Lengthvalue: [102] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-19 23:39:50,034] INFO ** Header: Acceptvalue: [*/*] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-19 23:39:50,034] INFO ** Header: User-Agentvalue: [curl/7.64.1] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-19 23:39:50,034] INFO ** Header: Hostvalue: [localhost:8082] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-19 23:39:50,034] INFO ** Header: X-Content-Encodingvalue: [gzip] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-19 23:39:50,035] INFO ** Header: Content-Typevalue: [application/json] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-19 23:39:50,035] INFO ** request method POST (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:363)
+  //[2022-04-19 23:39:50,035] INFO ** request get request method POST (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:364)
+  //[2022-04-19 23:39:50,036] INFO reading bytes[B@16923df5 (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:457)
+  //[2022-04-19 23:39:50,039] INFO ** metric size recorded 2677 (io.confluent.kafkarest.resources.v3.ProduceAction:287)
+  //[2022-04-19 23:39:50,040] INFO reading bytes[B@16923df5 (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:457)
+  //[2022-04-19 23:39:50,040] INFO after gzip is handled (io.confluent.rest.ApplicationServer:610)
+  //[2022-04-19 23:39:50,040] INFO handling gzip base request length:102request length 102request uri: /v3/clusters/nHQfD6V7Q_K29guDHiLdpw/topics/summit/recordsheader with :nullheader with no : null (io.confluent.rest.ApplicationServer:611)
+
+  //I also added a logline in kafka-rest to print out how many bytes we record for the produce metric to compare
+
+  //To use a rebuilt rest-utils in a local kafka image you can copy the rest-utils jar into the right place using something similar to
+  // cp  /Users/ehumber/git/forks/rest-utils/package/target/rest-utils-package-7.2.0-0-package/share/java/rest-utils/rest-utils-7.2.0-0.jar   /Users/ehumber/git/forks/kafka-rest/kafka-rest/target/kafka-rest-7.3.0-0-development/share/java/kafka-rest/rest-utils-7.3.0-164.jar
+
+
+  //The streamed case is more interesting, the logs look like
+  //[2022-04-22 09:47:07,930] INFO before gzip is handled (io.confluent.rest.ApplicationServer:599)
+  //[2022-04-22 09:47:07,930] INFO handling gzip base request length:-1request length -1request uri: /v3/clusters/nHQfD6V7Q_K29guDHiLdpw/topics/summit/recordsheader with :nullheader with no : null (io.confluent.rest.ApplicationServer:600)
+  //[2022-04-22 09:47:07,930] INFO gzip request input stream0 (io.confluent.rest.ApplicationServer:607)
+  //[2022-04-22 09:47:07,931] INFO gzip base requestRequest(POST //localhost:8082/v3/clusters/nHQfD6V7Q_K29guDHiLdpw/topics/summit/records)@6dfdf534 (io.confluent.rest.ApplicationServer:608)
+  //[2022-04-22 09:47:07,931] INFO ** Header: Transfer-Encodingvalue: [gzip, chunked] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-22 09:47:07,932] INFO ** Header: Acceptvalue: [*/*] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-22 09:47:07,932] INFO ** Header: Expectvalue: [100-continue] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-22 09:47:07,932] INFO ** Header: User-Agentvalue: [curl/7.64.1] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-22 09:47:07,932] INFO ** Header: Hostvalue: [localhost:8082] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-22 09:47:07,932] INFO ** Header: Content-Typevalue: [application/json] (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:362)
+  //[2022-04-22 09:47:07,932] INFO ** request method POST (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:363)
+  //[2022-04-22 09:47:07,932] INFO ** request get request method POST (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:364)
+  //[2022-04-22 09:47:07,933] INFO reading bytes[B@28ff76ef (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:457)
+  //[2022-04-22 09:47:34,345] INFO ** metric size recorded 67 (io.confluent.kafkarest.resources.v3.ProduceAction:287)
+  //[2022-04-22 09:47:34,346] INFO reading bytes[B@28ff76ef (io.confluent.rest.metrics.MetricsResourceMethodApplicationListener:457)
+  //[2022-04-22 09:48:04,355] INFO after gzip is handled (io.confluent.rest.ApplicationServer:610)
+  //[2022-04-22 09:48:04,355] INFO handling gzip base request length:-1request length -1request uri: /v3/clusters/nHQfD6V7Q_K29guDHiLdpw/topics/summit/recordsheader with :nullheader with no : null (io.confluent.rest.ApplicationServer:611)
+
+  //Note the -1 size,
+
+
+  public static class MyGzipHandler extends GzipHandler {
+
+    public void handle(String target, Request baseRequest, HttpServletRequest request,
+        HttpServletResponse response) throws IOException, ServletException {
+
+      log.info("before gzip is handled");
+      log.info(
+              "handling gzip base request length:" + baseRequest.getContentLengthLong() +
+              "request length " + request.getContentLengthLong() +
+              "request uri: " + request.getRequestURI() +
+              "header with :" + request.getHeader("Authorization:") +
+              "header with no : " + request.getHeader("Authorization"));
+   //   request.getParts().forEach(part -> log.info("part" + part));
+      log.info("gzip request input stream" + request.getInputStream().available());
+      log.info("gzip base request" + baseRequest);
+      log.info("** input stream available bytes " + request.getInputStream().available());
+      super.handle(target, baseRequest, request, response);
+      log.info("after gzip is handled");
+      log.info(
+          "handling gzip base request length:" + baseRequest.getContentLengthLong() +
+              "request length " + request.getContentLengthLong() +
+              "request uri: " + request.getRequestURI() +
+              "header with :" + request.getHeader("Authorization:") +
+              "header with no : " + request.getHeader("Authorization"));
+
+    }
   }
 
   private Handler wrapWithGzipHandler(Handler handler) {

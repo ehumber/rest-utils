@@ -26,6 +26,8 @@ import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.core.Configurable;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static io.confluent.rest.metrics.MetricsResourceMethodApplicationListener.HTTP_STATUS_CODE_TAG;
 import static org.junit.jupiter.api.Assertions.*;
@@ -249,6 +251,7 @@ public class MetricsResourceMethodApplicationListenerIntegrationTest {
       // as opposed to a generic error page
       config.property(ServerProperties.RESPONSE_SET_STATUS_OVER_SEND_ERROR, true);
     }
+
 
     @Override
     protected void configurePostResourceHandling(ServletContextHandler context) {

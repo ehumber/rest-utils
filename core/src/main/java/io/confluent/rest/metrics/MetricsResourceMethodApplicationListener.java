@@ -356,6 +356,11 @@ public class MetricsResourceMethodApplicationListener implements ApplicationEven
       if (event.getType() == RequestEvent.Type.MATCHING_START) {
         started = time.milliseconds();
         final ContainerRequest request = event.getContainerRequest();
+
+        request.getRequestHeaders().forEach((h, v) -> log.info("** Header: " + h + "value: " + v));
+        log.info("** request method " + request.getMethod());
+        log.info("** request get request method " + request.getRequest().getMethod());
+
         wrappedRequestStream = new CountingInputStream(request.getEntityStream());
         request.setEntityStream(wrappedRequestStream);
       } else if (event.getType() == RequestEvent.Type.RESP_FILTERS_START) {
@@ -447,6 +452,7 @@ public class MetricsResourceMethodApplicationListener implements ApplicationEven
 
       @Override
       public int read(byte[] bytes, int off, int len) throws IOException {
+        log.info("reading bytes" + bytes);
         int nread = super.read(bytes, off, len);
         if (nread > 0) {
           count += nread;
