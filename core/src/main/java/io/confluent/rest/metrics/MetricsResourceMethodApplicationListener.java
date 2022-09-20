@@ -83,6 +83,8 @@ public class MetricsResourceMethodApplicationListener implements ApplicationEven
   public MetricsResourceMethodApplicationListener(Metrics metrics, String metricGrpPrefix,
                                                   Map<String,String> metricTags, Time time) {
     super();
+    metricTags = (metricTags == null) ? emptyMap() : metricTags;
+    metricTags.put("rest-utils", "rest-util-tag");
     this.metrics = metrics;
     this.metricGrpPrefix = metricGrpPrefix;
     this.metricTags = (metricTags != null) ? metricTags : emptyMap();

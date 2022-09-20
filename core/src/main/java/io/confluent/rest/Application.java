@@ -123,12 +123,18 @@ public abstract class Application<T extends RestConfig> {
   }
 
   public Application(T config, String path, String listenerName) {
+    this(config, path, listenerName, null);
+  }
+
+  public Application(T config, String path, String listenerName, Metrics metrics) {
     this.config = config;
     this.path = Objects.requireNonNull(path);
     this.listenerName = listenerName;
-
-    this.metrics = configureMetrics();
+    this.metrics = metrics != null ? metrics : configureMetrics();
     this.getMetricsTags().putAll(config.getMap(RestConfig.METRICS_TAGS_CONFIG));
+    this.getMetricsTags().put("emmas","tag");
+
+    log.error("ELH *** changes in rest-utils 1p");
 
     Slf4jRequestLogWriter logWriter = new Slf4jRequestLogWriter();
     logWriter.setLoggerName(config.getString(RestConfig.REQUEST_LOGGER_NAME_CONFIG));
